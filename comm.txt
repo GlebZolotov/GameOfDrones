@@ -1,0 +1,3 @@
+python baseline_racer.py --enable_viz_image_cv2 --planning_baseline_type all_gates_at_once --planning_and_control_api my --level_name Soccer_Field_Easy --race_tier 1
+netstat -ano | findstr :41451
+taskkill /PID <PID> /F
