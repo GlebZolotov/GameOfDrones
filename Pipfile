@@ -6,6 +6,7 @@ name = "pypi"
 [packages]
 airsimneurips = "*"
 opencv-python = "*"
+matplotlib = "*"
 
 [dev-packages]
 

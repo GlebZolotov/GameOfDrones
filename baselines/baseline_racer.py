@@ -4,6 +4,7 @@ import queue
 import time
 import warnings
 from argparse import ArgumentParser
+from datetime import datetime
 
 import airsimneurips as airsim
 import cv2
@@ -32,6 +33,7 @@ class BaselineRacer(object):
         self.yaw_angle = -1.57
         self.count_im = 0
         self.sum_conf = 0
+        self.start_time = 0
 
         self.airsim_client = airsim.MultirotorClient()
         self.airsim_client.confirmConnection()
@@ -249,7 +251,8 @@ class BaselineRacer(object):
                 gate_centers.append(((endX - startX) * (endY - startY),
                                      (startX + endX) // 2 - 150,
                                      (startY + endY) // 2 - 150,
-                                     confidence))
+                                     confidence,
+                                     max((endX - startX)/300, (endY - startY)/300)))
                 label = "{}: {:.2f}%".format(class_obj, confidence * 100)
                 cv2.rectangle(frame, (startX, startY), (endX, endY), color_obj, 2)
                 y = startY - 15 if startY - 15 > 15 else startY + 15
@@ -260,7 +263,7 @@ class BaselineRacer(object):
             cv2.imwrite("imgs\\" + str(i__) + ".jpg", frame)
         if len(gate_centers) > 0:
             gate_centers.sort(key=lambda center: center[0])
-            return gate_centers[-1][1], gate_centers[-1][2], gate_centers[-1][3]
+            return gate_centers[-1][1], gate_centers[-1][2], gate_centers[-1][3], gate_centers[-1][4]
         return None
 
     def fly_itself(self):
@@ -276,36 +279,37 @@ class BaselineRacer(object):
                     continue
                 near_center = self.get_nearest_frame_center()
                 i__ += 1
+                velocities = self.airsim_client.getMultirotorState(self.drone_name).kinematics_estimated.linear_velocity
+                cur_vel = math.sqrt(velocities.x_val ** 2 + velocities.y_val ** 2)
                 if near_center is not None:
                     self.prev_goal = near_center
-                    velocities = self.airsim_client.getMultirotorState(self.drone_name).kinematics_estimated.linear_velocity
-                    cur_vel = math.sqrt(velocities.x_val ** 2 + velocities.y_val ** 2)
-                    print(cur_vel)
                     if math.fabs(self.prev_goal[0]) < 0 and math.fabs(self.prev_goal[1]) < 0:
                         self.time_to_goal = time.perf_counter() + 5
-                    self.yaw_angle -= self.prev_goal[0] / 300
-                    if cur_vel < 3:
-                        self.airsim_client.moveByRollPitchYawZAsync(self.prev_goal[0] / 500,
-                                                                   0.03,
-                                                                   self.yaw_angle,
-                                                                   self.airsim_client.simGetVehiclePose(self.drone_name).position.z_val + self.prev_goal[1] / 500, 0.5,
-                                                                   self.drone_name)
-                    else:
-                        self.airsim_client.moveByRollPitchYawZAsync(self.prev_goal[0] / 500,
-                                                                    0.0,
-                                                                    self.yaw_angle,
-                                                                    self.airsim_client.simGetVehiclePose(
-                                                                        self.drone_name).position.z_val +
-                                                                    self.prev_goal[1] / 500, 0.5,
-                                                                    self.drone_name)
+                    self.yaw_angle -= self.prev_goal[0] * math.log((cur_vel + 1) * math.e) * self.prev_goal[3] / 300
+                    self.set_trajectory(cur_vel)
                 elif self.prev_goal is not None:
-                    self.airsim_client.moveByRollPitchYawrateThrottleAsync(self.prev_goal[0] / 400,
-                                                                           0.05,
-                                                                           - self.prev_goal[0] / 225,
-                                                                           0.6 - self.prev_goal[1] / 2000, 0.5,
-                                                                           self.drone_name)
+                    self.set_trajectory(cur_vel)
             else:
                 time.sleep(0.15)
+
+    def set_trajectory(self, cur_vel):
+        # print(cur_vel)
+        if cur_vel < 3:
+            self.airsim_client.moveByRollPitchYawZAsync(self.prev_goal[0] * math.log((cur_vel + 1) * math.e) * self.prev_goal[3] / 500,
+                                                        0.03,
+                                                        self.yaw_angle,
+                                                        self.airsim_client.simGetVehiclePose(
+                                                            self.drone_name).position.z_val +
+                                                        self.prev_goal[1] / 50, 0.5,
+                                                        self.drone_name)
+        else:
+            self.airsim_client.moveByRollPitchYawZAsync(self.prev_goal[0] * math.log((cur_vel + 1) * math.e) * self.prev_goal[3] / 500,
+                                                        0.0,
+                                                        self.yaw_angle,
+                                                        self.airsim_client.simGetVehiclePose(
+                                                            self.drone_name).position.z_val +
+                                                        self.prev_goal[1] / 50, 0.5,
+                                                        self.drone_name)
 
     def image_callback(self, stack):
         # get uncompressed fpv cam image
@@ -314,6 +318,13 @@ class BaselineRacer(object):
         time.sleep(0.1)
         img_rgb_1d = np.fromstring(response[0].image_data_uint8, dtype=np.uint8)
         img_rgb = img_rgb_1d.reshape(response[0].height, response[0].width, 3)
+        if self.start_time == 0:
+            self.start_time = datetime.now()
+        print(datetime.now() - self.start_time)
+        drone_state = self.airsim_client_images.getMultirotorState()
+        # in world frame:
+        print(drone_state.kinematics_estimated.position)
+
         if stack.qsize() > 5:
             while not stack.empty():
                 try:
